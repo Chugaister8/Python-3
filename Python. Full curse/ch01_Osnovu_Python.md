@@ -912,3 +912,480 @@ target_metadata = Base.metadata
 | Обробка виключень | Всі частини |
 
 > 🔗 **Далі:** Частина II — Типізація та якість коду
+
+---
+
+## Розділ 1.5 — Enum, itertools, functools, dataclasses (поглиблено)
+
+### § 1.5.1 Enum — типізовані константи
+
+```python
+from enum import Enum, auto, IntEnum, StrEnum, Flag, unique
+from typing import ClassVar
+
+# ─── Базовий Enum ────────────────────────────────────────────────────────────
+class Color(Enum):
+    RED   = 1
+    GREEN = 2
+    BLUE  = 3
+
+c = Color.RED
+print(c)          # Color.RED
+print(c.name)     # "RED"
+print(c.value)    # 1
+print(c is Color.RED)   # True
+
+# ─── auto() — автоматична нумерація ──────────────────────────────────────────
+class Direction(Enum):
+    NORTH = auto()   # 1
+    SOUTH = auto()   # 2
+    EAST  = auto()   # 3
+    WEST  = auto()   # 4
+
+# ─── IntEnum / StrEnum — сумісні з int / str ─────────────────────────────────
+class Status(IntEnum):
+    PENDING  = 0
+    ACTIVE   = 1
+    BANNED   = 2
+
+# Порівняння з int (IntEnum дає сумісність)
+print(Status.ACTIVE == 1)   # True
+print(Status.ACTIVE > Status.PENDING)  # True
+
+class Priority(StrEnum):
+    LOW    = "low"
+    MEDIUM = "medium"
+    HIGH   = "high"
+
+# Порівняння з рядком
+print(Priority.HIGH == "high")   # True
+print(f"Пріоритет: {Priority.HIGH}")   # "Пріоритет: high"
+
+# ─── @unique — заборонити дублікати значень ───────────────────────────────────
+@unique
+class HttpMethod(StrEnum):
+    GET    = "GET"
+    POST   = "POST"
+    PUT    = "PUT"
+    PATCH  = "PATCH"
+    DELETE = "DELETE"
+
+# ─── Flag — бітові маски (комбінації прав) ───────────────────────────────────
+class Permission(Flag):
+    READ    = auto()
+    WRITE   = auto()
+    DELETE  = auto()
+    ADMIN   = READ | WRITE | DELETE   # комбінація
+
+user_perms = Permission.READ | Permission.WRITE
+print(Permission.READ in user_perms)    # True
+print(Permission.DELETE in user_perms)  # False
+print(user_perms)                       # Permission.READ|WRITE
+
+# ─── Методи у Enum ────────────────────────────────────────────────────────────
+class Planet(Enum):
+    MERCURY = (3.303e+23, 2.4397e6)
+    VENUS   = (4.869e+24, 6.0518e6)
+    EARTH   = (5.976e+24, 6.37814e6)
+
+    def __init__(self, mass: float, radius: float) -> None:
+        self.mass   = mass
+        self.radius = radius
+
+    @property
+    def surface_gravity(self) -> float:
+        G = 6.67430e-11
+        return G * self.mass / (self.radius ** 2)
+
+print(f"Земля: {Planet.EARTH.surface_gravity:.2f} m/s²")   # 9.80 m/s²
+
+# ─── Ітерація та пошук ────────────────────────────────────────────────────────
+for s in Status:
+    print(f"{s.name}: {s.value}")
+
+# З рядка
+status = Status["ACTIVE"]     # Status.ACTIVE
+status = Status(1)            # Status.ACTIVE
+
+# ─── Django TextChoices / IntegerChoices (Django 3.0+) ───────────────────────
+from django.db import models
+
+class OrderStatus(models.TextChoices):
+    DRAFT     = "draft",     "Чернетка"
+    CONFIRMED = "confirmed", "Підтверджено"
+    SHIPPED   = "shipped",   "Відправлено"
+    DELIVERED = "delivered", "Доставлено"
+    CANCELLED = "cancelled", "Скасовано"
+
+class Order(models.Model):
+    status = models.CharField(
+        max_length=20,
+        choices=OrderStatus.choices,
+        default=OrderStatus.DRAFT,
+    )
+
+# Використання
+order = Order(status=OrderStatus.CONFIRMED)
+print(order.get_status_display())   # "Підтверджено"
+print(OrderStatus.CONFIRMED.label)  # "Підтверджено"
+```
+
+---
+
+### § 1.5.2 itertools — ефективна робота з ітераторами
+
+```python
+import itertools
+from collections.abc import Iterable, Iterator
+from typing import TypeVar
+
+T = TypeVar("T")
+
+# ─── Нескінченні ітератори ────────────────────────────────────────────────────
+# count: 0, 1, 2, 3, ...
+for i in itertools.islice(itertools.count(10, 2), 5):
+    print(i)   # 10, 12, 14, 16, 18
+
+# cycle: a, b, c, a, b, c, ...
+colors = list(itertools.islice(itertools.cycle(["red", "green", "blue"]), 7))
+# ['red', 'green', 'blue', 'red', 'green', 'blue', 'red']
+
+# repeat: 42, 42, 42 (або нескінченно)
+list(itertools.repeat(0, 5))   # [0, 0, 0, 0, 0]
+
+# ─── Комбінаторні ────────────────────────────────────────────────────────────
+# product: декартовий добуток
+list(itertools.product("AB", repeat=2))
+# [('A','A'), ('A','B'), ('B','A'), ('B','B')]
+
+list(itertools.product([1, 2], [3, 4]))
+# [(1,3), (1,4), (2,3), (2,4)]
+
+# combinations: C(n,k) без повторень
+list(itertools.combinations("ABCD", 2))
+# [('A','B'), ('A','C'), ('A','D'), ('B','C'), ('B','D'), ('C','D')]
+
+# permutations: P(n,k)
+list(itertools.permutations("ABC", 2))
+# [('A','B'), ('A','C'), ('B','A'), ('B','C'), ('C','A'), ('C','B')]
+
+# combinations_with_replacement: з повтореннями
+list(itertools.combinations_with_replacement("AB", 2))
+# [('A','A'), ('A','B'), ('B','B')]
+
+# ─── Об'єднання та фільтрація ────────────────────────────────────────────────
+# chain: об'єднати кілька ітераторів
+list(itertools.chain([1, 2], [3, 4], [5]))   # [1, 2, 3, 4, 5]
+list(itertools.chain.from_iterable([[1,2],[3,4]]))  # flatten на один рівень
+
+# takewhile / dropwhile
+list(itertools.takewhile(lambda x: x < 5, [1,2,3,4,5,6,1]))  # [1,2,3,4]
+list(itertools.dropwhile(lambda x: x < 5, [1,2,3,4,5,6,1]))  # [5,6,1]
+
+# compress: фільтр за бітовою маскою
+list(itertools.compress("ABCDE", [1,0,1,0,1]))   # ['A', 'C', 'E']
+
+# ─── Групування ──────────────────────────────────────────────────────────────
+# groupby: ВИМАГАЄ попереднього сортування!
+data = [
+    {"dept": "IT",  "name": "Іван"},
+    {"dept": "IT",  "name": "Марія"},
+    {"dept": "HR",  "name": "Петро"},
+    {"dept": "HR",  "name": "Оля"},
+]
+data.sort(key=lambda x: x["dept"])   # обов'язково!
+
+for dept, group in itertools.groupby(data, key=lambda x: x["dept"]):
+    members = [p["name"] for p in group]
+    print(f"{dept}: {members}")
+# HR: ['Петро', 'Оля']
+# IT: ['Іван', 'Марія']
+
+# ─── Накопичення ─────────────────────────────────────────────────────────────
+# accumulate: накопичувальна операція
+import operator
+list(itertools.accumulate([1,2,3,4,5]))                      # [1,3,6,10,15]
+list(itertools.accumulate([1,2,3,4,5], operator.mul))        # [1,2,6,24,120]
+list(itertools.accumulate([3,1,4,1,5,9], max))               # running max
+
+# ─── Практичний приклад: батчінг ─────────────────────────────────────────────
+def batched(iterable: Iterable[T], n: int) -> Iterator[tuple[T, ...]]:
+    """Розбити ітератор на chunks по n елементів. (вбудований у 3.12+)"""
+    it = iter(iterable)
+    while chunk := tuple(itertools.islice(it, n)):
+        yield chunk
+
+for batch in batched(range(10), 3):
+    print(batch)
+# (0, 1, 2), (3, 4, 5), (6, 7, 8), (9,)
+
+# Python 3.12+ має вбудований itertools.batched
+```
+
+---
+
+### § 1.5.3 functools — функціональні інструменти
+
+```python
+import functools
+from typing import TypeVar, Callable, Any
+
+T = TypeVar("T")
+
+# ─── reduce ──────────────────────────────────────────────────────────────────
+from functools import reduce
+import operator
+
+# sum через reduce
+reduce(operator.add, [1, 2, 3, 4, 5])          # 15
+reduce(operator.mul, [1, 2, 3, 4, 5], 1)       # 120
+
+# Flatten через reduce
+nested = [[1,2],[3,4],[5]]
+reduce(operator.iadd, nested, [])               # [1,2,3,4,5]
+
+# ─── partial — часткове застосування ─────────────────────────────────────────
+from functools import partial
+
+def power(base: float, exp: float) -> float:
+    return base ** exp
+
+square = partial(power, exp=2)
+cube   = partial(power, exp=3)
+print(square(5))   # 25
+print(cube(3))     # 27
+
+# Практично: логер з префіксом
+import logging
+log_error = partial(logging.log, logging.ERROR)
+log_info  = partial(logging.log, logging.INFO)
+
+# ─── singledispatch — перевантаження функцій ─────────────────────────────────
+from functools import singledispatch
+
+@singledispatch
+def serialize(value: Any) -> str:
+    return str(value)
+
+@serialize.register(int)
+def _(value: int) -> str:
+    return f"{value:,}"   # 1,234,567
+
+@serialize.register(float)
+def _(value: float) -> str:
+    return f"{value:.2f}"
+
+@serialize.register(list)
+def _(value: list) -> str:
+    return "[" + ", ".join(serialize(v) for v in value) + "]"
+
+print(serialize(1234567))         # "1,234,567"
+print(serialize(3.14159))         # "3.14"
+print(serialize([1, 2.5, "x"]))  # "[1, 2.50, x]"
+
+# ─── cache / lru_cache ────────────────────────────────────────────────────────
+from functools import cache, lru_cache
+
+@cache   # необмежений (Python 3.9+)
+def fib(n: int) -> int:
+    return n if n < 2 else fib(n-1) + fib(n-2)
+
+@lru_cache(maxsize=128)
+def get_user_perms(user_id: int) -> frozenset[str]:
+    # дорогий запит до БД — виконається тільки раз на user_id
+    return frozenset(db.get_permissions(user_id))
+
+# Статистика кешу
+print(fib.cache_info())   # CacheInfo(hits=..., misses=..., maxsize=None, currsize=...)
+fib.cache_clear()
+
+# ─── total_ordering — автодоповнення методів порівняння ──────────────────────
+from functools import total_ordering
+
+@total_ordering
+class Version:
+    def __init__(self, major: int, minor: int, patch: int) -> None:
+        self.major = major
+        self.minor = minor
+        self.patch = patch
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Version):
+            return NotImplemented
+        return (self.major, self.minor, self.patch) == (other.major, other.minor, other.patch)
+
+    def __lt__(self, other: "Version") -> bool:
+        return (self.major, self.minor, self.patch) < (other.major, other.minor, other.patch)
+
+    # total_ordering автоматично додає __le__, __gt__, __ge__
+
+v1 = Version(1, 2, 3)
+v2 = Version(1, 3, 0)
+print(v1 < v2)    # True
+print(v1 <= v2)   # True (автоматично!)
+print(v2 > v1)    # True (автоматично!)
+```
+
+---
+
+### § 1.5.4 dataclasses — повний арсенал
+
+```python
+from dataclasses import dataclass, field, fields, asdict, astuple, replace, KW_ONLY
+from typing import ClassVar, InitVar
+
+# ─── field() повністю ────────────────────────────────────────────────────────
+@dataclass
+class Config:
+    host:     str  = "localhost"
+    port:     int  = 8080
+    # default_factory — для мутабельних дефолтів
+    tags:     list[str] = field(default_factory=list)
+    # repr=False — не показувати у __repr__
+    password: str = field(default="", repr=False)
+    # compare=False — не враховувати при ==
+    _id:      int = field(default=0, compare=False, repr=False)
+    # init=False — не передавати в __init__, встановлюється в __post_init__
+    created:  str = field(default="", init=False)
+
+    def __post_init__(self) -> None:
+        import datetime
+        self.created = datetime.datetime.utcnow().isoformat()
+        if self.port < 1 or self.port > 65535:
+            raise ValueError(f"Invalid port: {self.port}")
+
+# ─── KW_ONLY — тільки keyword аргументи (Python 3.10+) ───────────────────────
+@dataclass
+class Point3D:
+    x: float
+    y: float
+    _: KW_ONLY          # всі після цього — тільки keyword
+    z: float = 0.0
+    label: str = ""
+
+p = Point3D(1.0, 2.0, z=3.0, label="origin")
+# Point3D(1.0, 2.0) — теж OK, z та label мають дефолти
+
+# ─── InitVar — аргумент тільки для __init__ ───────────────────────────────────
+@dataclass
+class HashedPassword:
+    username: str
+    raw_password: InitVar[str]        # не зберігається як атрибут
+    password_hash: str = field(init=False)
+
+    def __post_init__(self, raw_password: str) -> None:
+        import hashlib
+        self.password_hash = hashlib.sha256(raw_password.encode()).hexdigest()
+
+u = HashedPassword("ivan", "secret123")
+print(u.password_hash)   # sha256 hash
+# u.raw_password  — AttributeError: немає такого атрибута
+
+# ─── frozen=True — незмінний (hashable) ──────────────────────────────────────
+@dataclass(frozen=True)
+class Coordinate:
+    lat: float
+    lng: float
+
+    def distance_to(self, other: "Coordinate") -> float:
+        return ((self.lat - other.lat)**2 + (self.lng - other.lng)**2) ** 0.5
+
+coord = Coordinate(50.45, 30.52)
+# coord.lat = 51.0  → FrozenInstanceError!
+
+# Frozen dataclass можна використовувати як ключ словника або в set
+locations = {Coordinate(50.45, 30.52), Coordinate(49.84, 24.03)}
+
+# ─── slots=True — Python 3.10+ ────────────────────────────────────────────────
+@dataclass(slots=True)   # __slots__ автоматично — менше пам'яті
+class Sensor:
+    device_id: str
+    value:     float
+    timestamp: float
+
+# ─── replace() — копія з зміненими полями ────────────────────────────────────
+original = Config(host="db.local", port=5432)
+updated  = replace(original, port=5433)
+print(original.port)  # 5432
+print(updated.port)   # 5433
+
+# ─── asdict / astuple / fields ────────────────────────────────────────────────
+d = asdict(original)    # {"host": "db.local", "port": 5432, ...}
+t = astuple(original)   # ("db.local", 5432, ...)
+
+for f in fields(Config):
+    print(f.name, f.type, f.default)
+
+# ─── ClassVar — не поле, не в __init__ ────────────────────────────────────────
+@dataclass
+class Counter:
+    _count: ClassVar[int] = 0   # спільна для всіх екземплярів
+
+    name: str
+
+    def __post_init__(self) -> None:
+        Counter._count += 1
+
+    @classmethod
+    def total(cls) -> int:
+        return cls._count
+```
+
+---
+
+### § 1.5.5 Timezone-aware datetime
+
+```python
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo   # Python 3.9+ (вбудований)
+
+# ─── UTC-aware datetime ───────────────────────────────────────────────────────
+now_utc = datetime.now(timezone.utc)
+print(now_utc)   # 2025-01-15 14:30:00+00:00
+
+# ─── Конкретна timezone ───────────────────────────────────────────────────────
+kyiv = ZoneInfo("Europe/Kyiv")
+now_kyiv = datetime.now(kyiv)
+print(now_kyiv)  # 2025-01-15 16:30:00+02:00
+
+# ─── Конвертація між timezone ────────────────────────────────────────────────
+ny    = ZoneInfo("America/New_York")
+tokyo = ZoneInfo("Asia/Tokyo")
+
+event = datetime(2025, 6, 15, 10, 0, tzinfo=kyiv)   # 10:00 Kyiv
+print(event.astimezone(ny))     # 03:00 New York
+print(event.astimezone(tokyo))  # 16:00 Tokyo
+
+# ─── Naive vs Aware ──────────────────────────────────────────────────────────
+naive  = datetime(2025, 1, 15, 10, 0)          # ❌ немає timezone
+aware  = datetime(2025, 1, 15, 10, 0, tzinfo=timezone.utc)   # ✅
+
+# Перетворити naive → aware (якщо знаємо, що це UTC)
+aware = naive.replace(tzinfo=timezone.utc)
+
+# ─── Django: USE_TZ = True ────────────────────────────────────────────────────
+# settings.py
+USE_TZ = True
+TIME_ZONE = "Europe/Kyiv"
+
+# В коді завжди використовувати django.utils.timezone
+from django.utils import timezone as dj_tz
+
+now = dj_tz.now()                        # UTC-aware datetime
+local_now = dj_tz.localtime(now)         # конвертувати до TIME_ZONE
+local_now = dj_tz.localtime(now, ZoneInfo("America/New_York"))  # інша TZ
+
+# ⚠️ Ніколи не використовувати datetime.datetime.now() в Django з USE_TZ!
+# datetime.datetime.now(tz=dj_tz.utc)  ← правильно
+
+# ─── Список доступних timezone ───────────────────────────────────────────────
+import zoneinfo
+zones = sorted(zoneinfo.available_timezones())
+ukraine_zones = [z for z in zones if "Kiev" in z or "Kyiv" in z]
+```
+
+📋 **Завдання 1.5** — Закріплення:
+1. Написати `Permission` Flag Enum з правами READ/WRITE/DELETE/ADMIN і функцію `check_access(user_perms, required)`.
+2. Реалізувати `pipeline(*funcs)` через `functools.reduce` — послідовне застосування функцій.
+3. Написати `@dataclass(frozen=True, slots=True) Point` і покласти 1000 екземплярів у set — порівняти пам'ять з звичайним class.
+4. Написати `format_schedule(events)` що групує події по даті через `itertools.groupby`.
