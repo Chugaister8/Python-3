@@ -1389,3 +1389,399 @@ ukraine_zones = [z for z in zones if "Kiev" in z or "Kyiv" in z]
 2. Реалізувати `pipeline(*funcs)` через `functools.reduce` — послідовне застосування функцій.
 3. Написати `@dataclass(frozen=True, slots=True) Point` і покласти 1000 екземплярів у set — порівняти пам'ять з звичайним class.
 4. Написати `format_schedule(events)` що групує події по даті через `itertools.groupby`.
+
+---
+
+## Розділ 1.6 — match/case, regex, logging
+
+### § 1.6.1 Structural Pattern Matching (Python 3.10+)
+
+```python
+# match/case — потужніший за if/elif, перевіряє структуру даних
+
+# ─── Базові значення ──────────────────────────────────────────────────────────
+def http_status(status: int) -> str:
+    match status:
+        case 200:
+            return "OK"
+        case 201:
+            return "Created"
+        case 400 | 422:             # OR-паттерн
+            return "Bad Request"
+        case 401 | 403:
+            return "Auth Error"
+        case code if code >= 500:   # guard clause
+            return f"Server Error {code}"
+        case _:                     # default (обов'язково останній)
+            return "Unknown"
+
+# ─── Sequence patterns (списки, кортежі) ────────────────────────────────────
+def process_command(command: list[str]) -> str:
+    match command:
+        case []:
+            return "Empty command"
+        case ["quit"]:
+            return "Goodbye!"
+        case ["go", direction]:              # capture: direction = command[1]
+            return f"Going {direction}"
+        case ["go", direction, speed]:
+            return f"Going {direction} at {speed}"
+        case ["get", obj, *rest]:            # *rest captures remaining
+            return f"Getting {obj}, extras: {rest}"
+        case [first, *middle, last]:         # head, body, tail
+            return f"First={first}, Last={last}"
+        case _:
+            return f"Unknown: {command}"
+
+print(process_command(["go", "north"]))          # "Going north"
+print(process_command(["get", "key", "a", "b"])) # "Getting key, extras: ['a', 'b']"
+
+# ─── Mapping patterns (словники) ─────────────────────────────────────────────
+def handle_event(event: dict) -> str:
+    match event:
+        case {"type": "click", "x": x, "y": y}:
+            return f"Click at ({x}, {y})"
+        case {"type": "keypress", "key": str(k)}:  # type check
+            return f"Key: {k}"
+        case {"type": "scroll", "delta": delta, **rest}:  # **rest = решта ключів
+            return f"Scroll {delta}, extra: {rest}"
+        case {"type": str(t)}:              # будь-який тип події
+            return f"Event: {t}"
+        case _:
+            return "Unknown event"
+
+# ─── Class patterns (dataclasses, NamedTuple) ────────────────────────────────
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+@dataclass
+class Circle:
+    center: Point
+    radius: float
+
+@dataclass
+class Rectangle:
+    top_left: Point
+    bottom_right: Point
+
+def describe_shape(shape) -> str:
+    match shape:
+        case Point(x=0, y=0):
+            return "Origin"
+        case Point(x=0, y=y):
+            return f"On Y-axis at {y}"
+        case Point(x=x, y=0):
+            return f"On X-axis at {x}"
+        case Point(x=x, y=y):
+            return f"Point ({x}, {y})"
+        case Circle(center=Point(x=0, y=0), radius=r):
+            return f"Circle at origin, r={r}"
+        case Circle(center=c, radius=r) if r > 100:
+            return f"Large circle at {c}, r={r}"
+        case Rectangle(top_left=Point(x=x1, y=y1),
+                        bottom_right=Point(x=x2, y=y2)):
+            area = abs((x2-x1) * (y2-y1))
+            return f"Rectangle, area={area}"
+        case _:
+            return "Unknown shape"
+
+# ─── OR-паттерни та as ────────────────────────────────────────────────────────
+def classify(value) -> str:
+    match value:
+        case int() | float() as num if num < 0:
+            return f"Negative number: {num}"
+        case int() | float() as num:
+            return f"Non-negative number: {num}"
+        case str() as s if len(s) > 10:
+            return f"Long string: {s[:10]}..."
+        case str() as s:
+            return f"Short string: {s!r}"
+        case [*items] if len(items) > 5:
+            return f"Long list: {len(items)} items"
+        case None:
+            return "None value"
+        case _:
+            return f"Other: {type(value).__name__}"
+
+# ─── Практичний приклад: парсер JSON-команд API ──────────────────────────────
+def dispatch_api_request(request: dict) -> dict:
+    match request:
+        case {"method": "GET", "path": str(path), "params": dict(params)}:
+            return handle_get(path, params)
+        case {"method": "POST", "path": str(path), "body": dict(body)}:
+            return handle_post(path, body)
+        case {"method": "DELETE", "path": str(path)}:
+            return handle_delete(path)
+        case {"method": str(m)} if m not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+            return {"error": f"Method {m} not allowed", "status": 405}
+        case _:
+            return {"error": "Invalid request", "status": 400}
+```
+
+---
+
+### § 1.6.2 Регулярні вирази: повний арсенал
+
+```python
+import re
+
+# ─── Компіляція — для повторного використання ────────────────────────────────
+EMAIL_RE    = re.compile(r"^[\w.+-]+@[\w-]+\.[a-z]{2,}$", re.IGNORECASE)
+PHONE_RE    = re.compile(r"\+?[\d\s\-\(\)]{10,15}")
+DATE_RE     = re.compile(r"(?P<day>\d{2})[./](?P<month>\d{2})[./](?P<year>\d{4})")
+UUID_RE     = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+
+# re.compile швидший якщо шаблон використовується багато разів
+for email in emails:
+    if EMAIL_RE.match(email):   # швидше ніж re.match(r"...", email) кожен раз
+        process(email)
+
+# ─── Функції ──────────────────────────────────────────────────────────────────
+text = "Дата: 15.03.2024, наступна: 20/04/2024"
+
+# search — перше входження
+m = DATE_RE.search(text)
+if m:
+    print(m.group())            # "15.03.2024"
+    print(m.group("day"))       # "15" — іменована група
+    print(m.group("year"))      # "2024"
+    print(m.span())             # (6, 16) — позиція
+
+# findall — всі входження (рядки або групи)
+DATE_RE.findall(text)           # [('15','03','2024'), ('20','04','2024')]
+
+# finditer — всі входження як об'єкти Match
+for m in DATE_RE.finditer(text):
+    print(m.groupdict())        # {'day': '15', 'month': '03', 'year': '2024'}
+
+# sub — заміна
+result = re.sub(r"\d{4}", "XXXX", text)   # замінити рік
+
+# sub з функцією
+def mask_card(m: re.Match) -> str:
+    return "*" * (len(m.group()) - 4) + m.group()[-4:]
+
+masked = re.sub(r"\b\d{16}\b", mask_card, "Card: 1234567890123456")
+
+# split
+parts = re.split(r"[,;]\s*", "one, two;  three,four")   # ['one','two','three','four']
+
+# ─── Флаги ────────────────────────────────────────────────────────────────────
+# re.IGNORECASE (re.I)   — без урахування регістру
+# re.MULTILINE  (re.M)   — ^ та $ для кожного рядка
+# re.DOTALL     (re.S)   — . включає \n
+# re.VERBOSE    (re.X)   — дозволяє пробіли та коментарі
+
+COMPLEX_RE = re.compile(r"""
+    (?P<scheme>https?|ftp)   # протокол
+    ://                      # розділювач
+    (?P<host>[\w.-]+)        # домен
+    (?::(?P<port>\d+))?      # порт (опціональний)
+    (?P<path>/[\w/.-]*)?     # шлях (опціональний)
+    (?:\?(?P<query>[\w&=]+))? # query string
+""", re.VERBOSE | re.IGNORECASE)
+
+m = COMPLEX_RE.match("https://api.example.com:443/v1/users?page=2")
+if m:
+    print(m.groupdict())
+# {'scheme': 'https', 'host': 'api.example.com', 'port': '443',
+#  'path': '/v1/users', 'query': 'page=2'}
+
+# ─── Lookahead / Lookbehind ────────────────────────────────────────────────────
+text = "price: $100, discount: $20, total: $80"
+
+# Positive lookahead (?=...) — є попереду
+re.findall(r"\d+(?= грн|\$)", "100 грн та $200")   # ['100', '200']
+
+# Negative lookahead (?!...) — немає попереду
+re.findall(r"\d+(?!\d|\.)", "v1.2 build 456")      # ['456']
+
+# Positive lookbehind (?<=...) — є позаду
+re.findall(r"(?<=\$)\d+", "$100 and $200")          # ['100', '200']
+
+# Negative lookbehind (?<!...) — немає позаду
+re.findall(r"(?<!\d)\d{3}(?!\d)", "abc 123 4567")   # ['123']
+
+# ─── Non-capturing group (?:...) ────────────────────────────────────────────
+# Групує без захоплення — швидше і не засмічує групи
+re.findall(r"(?:cat|dog)s?", "cats and dogs")   # ['cats', 'dogs']
+
+# ─── Жадібність та ліність ────────────────────────────────────────────────────
+html = "<b>Bold</b> and <i>Italic</i>"
+
+re.findall(r"<.+>",   html)   # ['<b>Bold</b> and <i>Italic</i>'] — жадібний
+re.findall(r"<.+?>",  html)   # ['<b>', '</b>', '<i>', '</i>']     — лінивий
+re.findall(r"<[^>]+>",html)   # ['<b>', '</b>', '<i>', '</i>']     — ефективніше!
+
+# ─── Практичні шаблони ────────────────────────────────────────────────────────
+PATTERNS = {
+    "email":    r"^[\w.+-]+@[\w-]+\.[a-z]{2,}$",
+    "phone_ua": r"^(\+38)?0\d{9}$",
+    "ipv4":     r"^(\d{1,3}\.){3}\d{1,3}$",
+    "slug":     r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    "password": r"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$!%?&])[A-Za-z\d@$!%?&]{8,}$",
+    "hex_color":r"^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$",
+    "uuid4":    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    "url":      r"^https?://[\w.-]+(?:\.[a-z]{2,})+(?:/[\w./-]*)?(?:\?\S*)?$",
+}
+
+def validate(value: str, pattern_name: str) -> bool:
+    pattern = PATTERNS.get(pattern_name)
+    if not pattern:
+        raise ValueError(f"Unknown pattern: {pattern_name}")
+    return bool(re.match(pattern, value, re.IGNORECASE))
+```
+
+---
+
+### § 1.6.3 Logging: повне налаштування
+
+```python
+import logging
+import logging.config
+import logging.handlers
+from pathlib import Path
+
+# ─── dictConfig — рекомендований спосіб ──────────────────────────────────────
+LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+
+    "formatters": {
+        "verbose": {
+            "format": "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d — %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
+        "json": {
+            "()": "pythonjsonlogger.jsonlogger.JsonFormatter",   # pip install python-json-logger
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+        "simple": {
+            "format": "%(levelname)s %(message)s",
+        },
+    },
+
+    "handlers": {
+        "console": {
+            "class":     "logging.StreamHandler",
+            "formatter": "verbose",
+            "stream":    "ext://sys.stdout",
+            "level":     "DEBUG",
+        },
+        "file": {
+            "class":       "logging.handlers.RotatingFileHandler",
+            "formatter":   "verbose",
+            "filename":    "logs/app.log",
+            "maxBytes":    10 * 1024 * 1024,   # 10 MB
+            "backupCount": 5,                   # зберігати 5 архівів
+            "encoding":    "utf-8",
+            "level":       "INFO",
+        },
+        "error_file": {
+            "class":       "logging.handlers.TimedRotatingFileHandler",
+            "formatter":   "verbose",
+            "filename":    "logs/errors.log",
+            "when":        "midnight",          # ротація кожну ніч
+            "interval":    1,
+            "backupCount": 30,                  # місяць
+            "encoding":    "utf-8",
+            "level":       "ERROR",
+        },
+        "null": {
+            "class": "logging.NullHandler",
+        },
+    },
+
+    "loggers": {
+        "myapp": {
+            "handlers":  ["console", "file", "error_file"],
+            "level":     "DEBUG",
+            "propagate": False,
+        },
+        "myapp.db": {
+            "handlers":  ["file"],
+            "level":     "WARNING",   # тільки SQL помилки
+            "propagate": False,
+        },
+        "httpx": {
+            "handlers":  ["null"],    # приглушити зовнішню бібліотеку
+            "level":     "WARNING",
+            "propagate": False,
+        },
+    },
+
+    "root": {
+        "handlers": ["console"],
+        "level":    "WARNING",
+    },
+}
+
+# Застосування
+Path("logs").mkdir(exist_ok=True)
+logging.config.dictConfig(LOGGING_CONFIG)
+
+# ─── Використання ─────────────────────────────────────────────────────────────
+log = logging.getLogger("myapp.orders")
+
+log.debug("Processing order %d", order_id)          # f-string ТІЛЬКИ якщо DEBUG увімкнений
+log.info("Order %d created: total=%.2f", order_id, total)
+log.warning("Low stock: %s has %d units", product, stock)
+log.error("Payment failed for order %d: %s", order_id, error)
+log.critical("Database connection lost!")
+
+# Виключення з traceback
+try:
+    risky_operation()
+except Exception:
+    log.exception("Unexpected error in risky_operation")  # автоматично додає traceback
+
+# Extra fields
+log.info("Request processed",
+         extra={"request_id": "abc123", "user_id": 42, "duration_ms": 150})
+
+# ─── Контекстний менеджер для тимчасового рівня ──────────────────────────────
+from contextlib import contextmanager
+
+@contextmanager
+def temporary_log_level(logger_name: str, level: int):
+    logger = logging.getLogger(logger_name)
+    old_level = logger.level
+    logger.setLevel(level)
+    try:
+        yield logger
+    finally:
+        logger.setLevel(old_level)
+
+with temporary_log_level("myapp.db", logging.DEBUG):
+    # Тут SQL запити логуються
+    User.objects.all()
+
+# ─── Фільтр для виключення sensitive даних ───────────────────────────────────
+class SensitiveDataFilter(logging.Filter):
+    PATTERNS = [
+        re.compile(r"password['\"]?\s*[:=]\s*['\"]?\S+", re.I),
+        re.compile(r"Bearer\s+[\w.-]{20,}"),
+        re.compile(r"\b\d{16}\b"),   # карткові номери
+    ]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        for pattern in self.PATTERNS:
+            message = pattern.sub("[REDACTED]", message)
+        record.msg = message
+        record.args = ()
+        return True
+
+# Додати до handler
+handler = logging.StreamHandler()
+handler.addFilter(SensitiveDataFilter())
+```
+
+📋 **Завдання 1.6:**
+1. Написати `parse_log_line(line)` через `re.compile` + іменовані групи: витягнути timestamp, рівень, модуль, повідомлення.
+2. Реалізувати `dispatch(event: dict)` через `match`/`case` для 5 типів подій з class patterns.
+3. Налаштувати `dictConfig` для проєкту: консоль (DEBUG), файл (INFO, RotatingFileHandler), errors.log (ERROR).
